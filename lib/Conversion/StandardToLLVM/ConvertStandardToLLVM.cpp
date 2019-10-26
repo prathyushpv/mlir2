@@ -38,6 +38,7 @@
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Type.h"
+#include "llvm/Support/Debug.h"
 
 using namespace mlir;
 
@@ -1509,17 +1510,16 @@ struct SubViewOpLowering : public LLVMLegalizationPattern<SubViewOp> {
     // Currently, only rank > 0 and full or no operands are supported. Fail to
     // convert otherwise.
     unsigned rank = sourceMemRefType.getRank();
-    if (viewMemRefType.getRank() == 0 || (rank != dynamicOffsets.size()) ||
+    if (viewMemRefType.getRank() == 0 || 
+        (!dynamicOffsets.empty() &&  rank != dynamicOffsets.size()) ||
         (!dynamicSizes.empty() && rank != dynamicSizes.size()) ||
         (!dynamicStrides.empty() && rank != dynamicStrides.size()))
       return matchFailure();
-
     int64_t offset;
     SmallVector<int64_t, 4> strides;
     auto successStrides = getStridesAndOffset(viewMemRefType, strides, offset);
     if (failed(successStrides))
       return matchFailure();
-
     // Create the descriptor.
     MemRefDescriptor sourceMemRef(operands.front());
     auto targetMemRef = MemRefDescriptor::undef(rewriter, loc, targetDescTy);
@@ -1555,7 +1555,12 @@ struct SubViewOpLowering : public LLVMLegalizationPattern<SubViewOp> {
     // Offset.
     Value *baseOffset = sourceMemRef.offset(rewriter, loc);
     for (int i = 0, e = viewMemRefType.getRank(); i < e; ++i) {
-      Value *min = dynamicOffsets[i];
+      Value *min;
+      if(dynamicOffsets.empty())
+        min = rewriter.create<LLVM::ConstantOp>(
+            loc, llvmIndexType, rewriter.getI64IntegerAttr(0));
+      else
+        min = dynamicOffsets[i];
       baseOffset = rewriter.create<LLVM::AddOp>(
           loc, baseOffset,
           rewriter.create<LLVM::MulOp>(loc, min, strideValues[i]));
